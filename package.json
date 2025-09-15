@@ -1,0 +1,12 @@
+{
+  "name": "ticket-classifier-root",
+  "private": true,
+  "scripts": {
+    "start": "concurrently \"cd backend && python app.py\" \"cd frontend && npm start\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}
+
+

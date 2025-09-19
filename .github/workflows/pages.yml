@@ -6,6 +6,7 @@ on:
     paths:
       - "package.json"
       - "package-lock.json"
+      - "frontend/**"
       - "src/**"
       - "public/**"
       - ".github/workflows/pages.yml"
@@ -25,24 +26,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # どこに package.json があるか自動判定（frontend/package.json 優先）
+      - id: locate
+        shell: bash
+        run: |
+          if [ -f frontend/package.json ]; then
+            echo "workdir=frontend" >> "$GITHUB_OUTPUT"
+            echo "cache_path=frontend/package-lock.json" >> "$GITHUB_OUTPUT"
+          elif [ -f package.json ]; then
+            echo "workdir=." >> "$GITHUB_OUTPUT"
+            echo "cache_path=package-lock.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "package.json not found in root or frontend/"
+            exit 1
+          fi
+          echo "Using workdir: $(cat $GITHUB_OUTPUT | sed -n 's/workdir=//p')"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-      - run: npm ci
-      - run: npm run build
-      # dist (Vite) か build (CRA) を自動検出
+          cache-dependency-path: ${{ steps.locate.outputs.cache_path }}
+
+      - name: Install deps
+        run: npm ci
+        working-directory: ${{ steps.locate.outputs.workdir }}
+
+      - name: Build
+        run: npm run build
+        working-directory: ${{ steps.locate.outputs.workdir }}
+
+      # dist(Vite) or build(CRA) を検出してアップロード
       - id: detect
         shell: bash
+        working-directory: ${{ steps.locate.outputs.workdir }}
         run: |
           if [ -d dist ]; then
-            echo "dir=dist" >> "$GITHUB_OUTPUT"
+            echo "dir=${{ steps.locate.outputs.workdir }}/dist" >> "$GITHUB_OUTPUT"
           elif [ -d build ]; then
-            echo "dir=build" >> "$GITHUB_OUTPUT"
+            echo "dir=${{ steps.locate.outputs.workdir }}/build" >> "$GITHUB_OUTPUT"
           else
             echo "No dist or build directory found. Check your build script."
             exit 1
           fi
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ steps.detect.outputs.dir }}

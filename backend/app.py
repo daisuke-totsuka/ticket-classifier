@@ -3,7 +3,7 @@ import json
 import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import psycopg2
+# import psycopg2  # DB機能は一時停止中（使用しないため無効化）
 
 app = Flask(__name__)
 CORS(app)
@@ -166,6 +166,44 @@ def predict():
         prompt_feedback = None
         candidates = None
 
+    # 入力テキストの埋め込みベクトルを生成（768次元）
+    embedding_str = None
+    # DB未使用モード: 以降の埋め込み生成とDB登録はスキップ
+    return jsonify({
+        'result': result, 
+        'raw': raw_text,
+        'label': label,
+        'reason': reason,
+        'action': action,
+        'title': title,
+        'confidence': confidence,
+        'meta': { 
+            'usage': usage, 
+            'prompt_feedback': prompt_feedback, 
+            'candidates': candidates 
+        }
+    })
+
+    try:
+        emb = genai.embed_content(
+            model='text-embedding-004',  # 768次元のテキスト埋め込み
+            content=ticket,
+        )
+        # ライブラリの戻り形に揺れがあるため両対応
+        vec = None
+        if isinstance(emb, dict):
+            # 典型: { 'embedding': [..floats..] }
+            if isinstance(emb.get('embedding'), list):
+                vec = emb.get('embedding')
+            # まれ: { 'embedding': { 'values': [...] } }
+            elif isinstance(emb.get('embedding'), dict):
+                vec = emb['embedding'].get('values') or emb['embedding'].get('value')
+        # 文字列表現にして pgvector に投入（例: '[0.1, 0.2, ...]')
+        if isinstance(vec, list) and len(vec) > 0:
+            embedding_str = '[' + ','.join(str(float(x)) for x in vec) + ']'
+    except Exception as _:
+        embedding_str = None
+
     # --- ここからDB登録処理 ---
     try:
         conn = psycopg2.connect(
@@ -177,13 +215,34 @@ def predict():
         )
         with conn:
             with conn.cursor() as cur:
+                # embedding カラムの有無を確認してから INSERT 内容を切り替え
                 cur.execute(
                     """
-                    INSERT INTO tickets (input_text, label, reason, confidence, recommended_action)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (ticket, label, reason, confidence, action)
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name   = 'tickets'
+                      AND column_name  = 'embedding'
+                    """
                 )
+                has_embedding_col = cur.fetchone() is not None
+
+                if has_embedding_col:
+                    cur.execute(
+                        """
+                        INSERT INTO tickets (input_text, label, reason, confidence, recommended_action, embedding)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (ticket, label, reason, confidence, action, embedding_str)
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO tickets (input_text, label, reason, confidence, recommended_action)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (ticket, label, reason, confidence, action)
+                    )
         conn.close()
     except Exception as db_exc:
         print(f"[DB ERROR] {db_exc}")

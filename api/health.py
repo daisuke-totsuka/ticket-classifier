@@ -16,11 +16,6 @@ app = Flask(__name__)
 def health():
     return jsonify({"ok": True})
 
-# デバッグ用：来たパスをそのまま返す
-@app.get("/<path:anypath>")
-def echo(anypath):
-    return jsonify({"seen_path": request.path})
-
 @app.post("/api/predict")
 def predict():
     data = request.get_json(force=True) or {}

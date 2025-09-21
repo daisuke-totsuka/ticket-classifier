@@ -1,10 +1,10 @@
 # api/app.py
 from flask import Flask, request, jsonify
-import os, sys, pathlib
+#import os, sys, pathlib
 
 # 既存モジュールをimportできるように、プロジェクトルートをパスに追加
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+#ROOT = pathlib.Path(__file__).resolve().parents[1]
+#sys.path.append(str(ROOT))
 
 # 例: 既存の推論関数をインポート
 # from ticket_classifier import load_model, predict_label

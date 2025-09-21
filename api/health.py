@@ -16,15 +16,15 @@ app = Flask(__name__)
 def health():
     return jsonify({"ok": True})
 
-@app.post("/api/predict")
-def predict():
-    data = request.get_json(force=True) or {}
-    text = data.get("text", "")
-    if not text:
-        return jsonify({"error":"text is required"}), 400
-    # label = predict_label(model, text)
-    label = "billing" if "bill" in text.lower() else "other"   # 仮
-    return jsonify({"label": label})
+#@app.post("/api/predict")
+#def predict():
+#    data = request.get_json(force=True) or {}
+#    text = data.get("text", "")
+#    if not text:
+#        return jsonify({"error":"text is required"}), 400
+#    # label = predict_label(model, text)
+#    label = "billing" if "bill" in text.lower() else "other"   # 仮
+#    return jsonify({"label": label})
 
 if __name__ == "__main__":
     # ★ローカル検証用（Vercelでは無視される）

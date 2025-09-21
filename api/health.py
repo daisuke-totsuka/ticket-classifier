@@ -13,7 +13,6 @@ sys.path.append(str(ROOT))
 app = Flask(__name__)
 
 @app.get("/")
-@app.get("/api/health")
 def health():
     return jsonify({"ok": True})
 
@@ -21,7 +20,7 @@ def health():
 @app.get("/<path:anypath>")
 def echo(anypath):
     return jsonify({"seen_path": request.path})
-    
+
 @app.post("/api/predict")
 def predict():
     data = request.get_json(force=True) or {}

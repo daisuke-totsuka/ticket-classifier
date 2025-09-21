@@ -2,7 +2,7 @@
   "name": "ticket-classifier-frontend",
   "private": true,
   "version": "0.1.0",
-  "homepage": "https://daisuke-totsuka.github.io/ticket-classifier/",
+  "homepage": ".",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",

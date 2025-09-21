@@ -12,7 +12,7 @@ sys.path.append(str(ROOT))
 
 app = Flask(__name__)
 
-@app.get("/api/health")
+@app.get("/")
 def health():
     return jsonify({"ok": True})
 

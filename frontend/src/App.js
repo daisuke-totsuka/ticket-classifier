@@ -34,13 +34,14 @@ function App() {
 
     setLoading(true);
     try {
-    const response = await fetch("http://localhost:5000/predict", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ticket }),
-    });
-    const data = await response.json();
-    setResult(data.result);
+      //    const response = await fetch("http://localhost:5000/predict", {
+      const response = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticket }),
+      });
+      const data = await response.json();
+      setResult(data.result);
       setRaw(data.raw || "");
       setMeta(data.meta || null);
       setLabel(data.label || "");
@@ -201,10 +202,10 @@ function App() {
           >
             チケット内容:
           </label>
-        <textarea
+          <textarea
             id="ticket"
-          value={ticket}
-          onChange={(e) => setTicket(e.target.value)}
+            value={ticket}
+            onChange={(e) => setTicket(e.target.value)}
             rows={6}
             placeholder="例: ユーザーがログインできないという問題が発生しています。エラーメッセージは「パスワードが正しくありません」と表示されます。"
             style={{

@@ -1,6 +1,7 @@
 import os, json, traceback
 from http.server import BaseHTTPRequestHandler
 import google.generativeai as genai
+import psycopg2  # psycopg2を追加
 
 def _json_response(handler: BaseHTTPRequestHandler, code: int, obj: dict):
     body = json.dumps(obj).encode()
@@ -31,6 +32,13 @@ class handler(BaseHTTPRequestHandler):
         if not api_key:
             return _json_response(self, 500, {"error": "Missing GEMINI_API_KEY/GOOGLE_API_KEY"})
 
+        # --- DB接続情報（環境変数から取得） ---
+        db_host = os.environ.get("PG_HOST", "localhost")
+        db_port = os.environ.get("PG_PORT", "5432")
+        db_name = os.environ.get("PG_DATABASE", "ticketdb")
+        db_user = os.environ.get("PG_USER", "postgres")
+        db_pass = os.environ.get("PG_PASSWORD", "Totsuka6218@")
+
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
@@ -40,14 +48,14 @@ class handler(BaseHTTPRequestHandler):
                 "次のチケット内容を分析し、厳密なJSONのみで返答してください。\n"
                 "日本語で、以下のキーを必ず含めてください: label, reason, confidence, action, title, related。\n"
                 "- label: 分類ラベル（例: '問い合わせ' / '障害対応' / 'その他' など任意）\n"
-                "- reason: その分類にした理由。省略せず、根拠（症状・影響範囲・再現条件・関連コンポーネント等）を具体的に記述。最低でも150文字以上、可能なら200〜400文字程度。\n"
+                "- reason: その分類にした理由。省略せず、根拠（症状・影響範囲・再現条件・関連コンポーネント等）を具体的に記述。最低でも150文字以上、可能なら200?400
                 "- action: 推奨される対応方法。調査手順・暫定回避策・恒久対策の順で箇条書き風に簡潔に。\n"
-                "- confidence: 0.0〜1.0 の信頼度（数値）\n"
+                "- confidence: 0.0?1.0 の信頼度（数値）\n"
                 "- title: チケット内容からユーザーにとって分かりやすく、関連も想起しやすい分類タイトル（短く明確に）\n"
-                "- related: titleに関連する語やラベルを3〜6個の配列で（例: ['サービス停止','復旧対応',...]）\n"
+                "- related: titleに関連する語やラベルを3?6個の配列で（例: ['サービス停止','復旧対応',...]）\n"
                 "他の文字やマークダウン、説明は一切出力しないでください。\n"
                 f"チケット内容: '{ticket}'\n"
-                "出力例: {\"label\": \"障害対応\", \"reason\": \"ログイン処理で…\", \"confidence\": 0.82, \"action\": \"1) ログ採取...\", \"title\": \"インシデント / 障害対応\", \"related\": [\"サービス停止\", \"エラー調査\", \"復旧対応\"]}"
+                "出力例: {\"label\": \"障害対応\", \"reason\": \"ログイン処理で…\", \"confidence\": 0.82, \"action
             )
 
             response = model.generate_content(
@@ -66,7 +74,7 @@ class handler(BaseHTTPRequestHandler):
                 if candidate_text.startswith("```") and candidate_text.endswith("```"):
                     candidate_text = candidate_text.strip("`\n").split("\n", 1)[-1]
                 if "{" in candidate_text and "}" in candidate_text:
-                    candidate_text = candidate_text[candidate_text.find("{"):candidate_text.rfind("}")+1]
+                    candidate_text = candidate_text[candidate_text.find("{"):candidate_text.rfind("}
                 parsed = json.loads(candidate_text)
             except Exception:
                 parsed = None
@@ -149,6 +157,49 @@ class handler(BaseHTTPRequestHandler):
             except Exception:
                 candidates = None
 
+            # --- DB登録処理 ---
+            try:
+                conn = psycopg2.connect(
+                    host=db_host,
+                    port=db_port,
+                    dbname=db_name,
+                    user=db_user,
+                    password=db_pass
+                )
+                with conn:
+                    with conn.cursor() as cur:
+                        # embedding カラムの有無を確認してから INSERT 内容を切り替え
+                        cur.execute(
+                            """
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_schema = 'public'
+                              AND table_name   = 'tickets'
+                              AND column_name  = 'embedding'
+                            """
+                        )
+                        has_embedding_col = cur.fetchone() is not None
+
+                        if has_embedding_col:
+                            cur.execute(
+                                """
+                                INSERT INTO tickets (input_text, label, reason, confidence, recommen
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                """,
+                                (ticket, label, reason, confidence, action, title, str(related))  # 
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                INSERT INTO tickets (input_text, label, reason, confidence, recommen
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                """,
+                                (ticket, label, reason, confidence, action, title, str(related))  # 
+                            )
+                conn.close()
+            except Exception as db_exc:
+                print(f"[DB ERROR] {db_exc}")
+
             # --- 応答 ---
             return _json_response(self, 200, {
                 "result": result,
@@ -164,6 +215,10 @@ class handler(BaseHTTPRequestHandler):
                     "candidates": candidates
                 }
             })
+
+        except ImportError as e:
+            print("ERROR: psycopg2 is not installed. Please install it with 'pip install psycopg2'")
+            return _json_response(self, 500, {"error": "psycopg2 is not installed. Please install it
 
         except Exception as e:
             print("ERROR:", traceback.format_exc())  # Vercel Runtime Logs に出ます

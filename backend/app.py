@@ -1,12 +1,45 @@
 import os
 import json
 import google.generativeai as genai
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from pathlib import Path
 # import psycopg2  # DB機能は一時停止中（使用しないため無効化）
 
-app = Flask(__name__)
-CORS(app)
+#app = Flask(__name__)
+#CORS(app)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_BUILD_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", "frontend", "build"))
+
+#app = Flask(
+#    __name__,
+#    static_folder=FRONTEND_BUILD_DIR,
+#    static_url_path="/",
+#)
+# React の build を配信したい場合（不要なら static_* の2引数は消してOK）
+app = Flask(__name__, static_folder="../frontend/build", static_url_path="/")
+
+# --- API: /api/health ---
+@app.get("/api/health")
+def health():
+    return jsonify({"status": "ok"})
+
+# --- SPA ルーティング（任意パスは index.html へフォールバック）---
+@app.get("/")
+@app.get("/<path:path>")
+def serve(path=""):
+    build_dir = Path(app.static_folder)
+    target = build_dir / path
+    if path and target.exists() and target.is_file():
+        return send_from_directory(build_dir, path)
+    return send_from_directory(build_dir, "index.html")
+
+if __name__ == "__main__":
+    # ローカルでは 5000 で起動
+    app.run(host="0.0.0.0", port=5000, debug=True)
+    
+# Render のパターンAでは同一オリジンでアクセスするため、APIパスのみCORSを許可
+CORS(app, resources={r"/api/*": {"origins": "*"}, r"/predict": {"origins": "*"}})
 
 # Gemini APIクライアントの初期化（APIキーは環境変数から取得）
 # 優先順: GEMINI_API_KEY -> GOOGLE_API_KEY。どちらも無ければ明示エラー
@@ -26,7 +59,9 @@ DB_NAME = os.environ.get("PG_DATABASE", "ticketdb")
 DB_USER = os.environ.get("PG_USER", "postgres")
 DB_PASS = os.environ.get("PG_PASSWORD", "Totsuka6218@")
 
+# 既存クライアント向けの /predict と、フロントエンドから呼び出す /api/ask の両方をサポート
 @app.route('/predict', methods=['POST'])
+@app.route('/api/ask', methods=['POST'])
 def predict():
     data = request.get_json()
     ticket = data.get('ticket', '')
@@ -263,5 +298,27 @@ def predict():
         }
     })
 
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_frontend(path):
+    """React のビルド済みファイルを配信する。"""
+    if app.static_folder and os.path.isdir(app.static_folder):
+        requested = os.path.join(app.static_folder, path)
+        index_path = os.path.join(app.static_folder, 'index.html')
+
+        if path and os.path.isfile(requested):
+            return send_from_directory(app.static_folder, path)
+
+        if os.path.isfile(index_path):
+            return send_from_directory(app.static_folder, 'index.html')
+
+    message = (
+        "前提となるフロントエンドのビルド成果物が見つかりません。\n"
+        "`npm run build` を実行してからアプリを起動してください。"
+    )
+    return message, 404
+
 if __name__ == '__main__':
-    app.run(debug=True)
+#    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)

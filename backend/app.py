@@ -1,324 +1,163 @@
-import os
-import json
-import google.generativeai as genai
-from flask import Flask, request, jsonify, send_from_directory
+import os, json
+from flask import Flask, request, jsonify, abort
 from flask_cors import CORS
-from pathlib import Path
-# import psycopg2  # DB機能は一時停止中（使用しないため無効化）
+import google.generativeai as genai
 
-#app = Flask(__name__)
-#CORS(app)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_BUILD_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", "frontend", "build"))
+# ===== 1) アプリ生成（staticはつけない：開発時は不要） =====
+app = Flask(__name__)
+# API 配下にだけ CORS を許可
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
-#app = Flask(
-#    __name__,
-#    static_folder=FRONTEND_BUILD_DIR,
-#    static_url_path="/",
-#)
-# React の build を配信したい場合（不要なら static_* の2引数は消してOK）
-app = Flask(__name__, static_folder="../frontend/build", static_url_path="/")
-
-# --- API: /api/health ---
-@app.get("/api/health")
+# ===== 2) ヘルスチェック =====
+@app.route('/api/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"})
 
-# --- SPA ルーティング（任意パスは index.html へフォールバック）---
-@app.get("/")
-@app.get("/<path:path>")
-def serve(path=""):
-    build_dir = Path(app.static_folder)
-    target = build_dir / path
-    if path and target.exists() and target.is_file():
-        return send_from_directory(build_dir, path)
-    return send_from_directory(build_dir, "index.html")
-
-if __name__ == "__main__":
-    # ローカルでは 5000 で起動
-    app.run(host="0.0.0.0", port=5000, debug=True)
-    
-# Render のパターンAでは同一オリジンでアクセスするため、APIパスのみCORSを許可
-CORS(app, resources={r"/api/*": {"origins": "*"}, r"/predict": {"origins": "*"}})
-
-# Gemini APIクライアントの初期化（APIキーは環境変数から取得）
-# 優先順: GEMINI_API_KEY -> GOOGLE_API_KEY。どちらも無ければ明示エラー
+# ===== 3) Gemini 初期化（重複は削除） =====
 API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 if not API_KEY:
     raise EnvironmentError(
-        "Gemini APIキーが見つかりません。PowerShell で `$env:GEMINI_API_KEY=""YOUR_KEY""` または `$env:GOOGLE_API_KEY=""YOUR_KEY""` を設定してください。"
+        "Gemini APIキーが見つかりません。PowerShell で "
+        "`$env:GEMINI_API_KEY=\"YOUR_KEY\"` または `$env:GOOGLE_API_KEY=\"YOUR_KEY\"` を設定してください。"
     )
-
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# PostgreSQL接続情報（必要に応じて環境変数や設定ファイルで管理してください）
-DB_HOST = os.environ.get("PG_HOST", "localhost")
-DB_PORT = os.environ.get("PG_PORT", "5432")
-DB_NAME = os.environ.get("PG_DATABASE", "ticketdb")
-DB_USER = os.environ.get("PG_USER", "postgres")
-DB_PASS = os.environ.get("PG_PASSWORD", "Totsuka6218@")
-
-# 既存クライアント向けの /predict と、フロントエンドから呼び出す /api/ask の両方をサポート
-@app.route('/predict', methods=['POST'])
+# ===== 4) 予測API（/api/predict と /api/ask を同一関数で受ける） =====
+@app.route('/api/predict', methods=['POST'])
 @app.route('/api/ask', methods=['POST'])
 def predict():
-    data = request.get_json()
+    data = request.get_json() or {}
     ticket = data.get('ticket', '')
 
+    # ★ダミー早期レスポンス（切り分け用）
+    return jsonify({
+        "result": "DUMMY",
+        "raw": "dummy",
+        "label": "テスト",
+        "reason": "ルート到達確認のためのダミー応答",
+        "action": "なし",
+        "title": "到達OK",
+        "confidence": 1.0,
+        "meta": None
+         }), 200
+    
     prompt = (
         "次のチケット内容を分析し、厳密なJSONのみで返答してください。\n"
         "日本語で、以下のキーを必ず含めてください: label, reason, confidence, action, title, related。\n"
-        "- label: 分類ラベル（例: '問い合わせ' / '障害対応' / 'その他' など任意）\n"
-        "- reason: その分類にした理由。省略せず、根拠（症状・影響範囲・再現条件・関連コンポーネント等）を具体的に記述。最低でも150文字以上、可能なら200〜400文字程度。\n"
-        "- action: 推奨される対応方法。調査手順・暫定回避策・恒久対策の順で箇条書き風に簡潔に。\n"
-        "- confidence: 0.0〜1.0 の信頼度（数値）\n"
-        "- title: チケット内容からユーザーにとって分かりやすく、関連も想起しやすい分類タイトル（短く明確に）\n"
-        "- related: titleに関連する語やラベルを3〜6個の配列で（例: ['サービス停止','復旧対応',...]）\n"
-        "他の文字やマークダウン、説明は一切出力しないでください。\n"
+        "- label: 分類ラベル\n"
+        "- reason: 150〜400文字程度で根拠を具体的に\n"
+        "- action: 調査手順/暫定回避/恒久対策を簡潔に\n"
+        "- confidence: 0.0〜1.0\n"
+        "- title: 短く明確な分類タイトル\n"
+        "- related: 3〜6個の関連語配列\n"
+        "他の文字やマークダウン、説明は出力しないでください。\n"
         f"チケット内容: '{ticket}'\n"
-        "出力例: {\"label\": \"障害対応\", \"reason\": \"ログイン処理で…\", \"confidence\": 0.82, \"action\": \"1) ログ採取...\", \"title\": \"インシデント / 障害対応\", \"related\": [\"サービス停止\", \"エラー調査\", \"復旧対応\"]}"
+        "出力例: {\"label\":\"障害対応\",\"reason\":\"...\",\"confidence\":0.82,"
+        "\"action\":\"1) ログ採取 ...\",\"title\":\"インシデント / 障害対応\","
+        "\"related\":[\"サービス停止\",\"エラー調査\",\"復旧対応\"]}"
     )
-    
+
     try:
-        response = model.generate_content(
+        resp = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0,
                 max_output_tokens=768
             )
         )
-        raw_text = response.text.strip()
+        raw_text = (resp.text or "").strip()
 
-        # JSON抽出と解析
-        label = ""
-        reason = ""
-        action = ""
-        title = ""
-        related = []
-        confidence = None
+        # --- JSON抽出 ---
         parsed = None
         try:
-            # コードフェンスが付く場合に備え除去
-            candidate_text = raw_text.strip()
-            if candidate_text.startswith("```") and candidate_text.endswith("```"):
-                candidate_text = candidate_text.strip("`\n").split('\n', 1)[-1]
-            # 先頭/末尾以外に文字が混ざる場合もあるので、最初の { から最後の } を抽出
-            if '{' in candidate_text and '}' in candidate_text:
-                candidate_text = candidate_text[candidate_text.find('{'):candidate_text.rfind('}')+1]
-            parsed = json.loads(candidate_text)
+            s = raw_text.strip()
+            if s.startswith("```") and s.endswith("```"):
+                s = s.strip("`\n").split("\n", 1)[-1]
+            if "{" in s and "}" in s:
+                s = s[s.find("{"): s.rfind("}")+1]
+            parsed = json.loads(s)
         except Exception:
             parsed = None
 
         if isinstance(parsed, dict):
-            label = str(parsed.get('label', '')).strip()
-            reason = str(parsed.get('reason', '')).strip()
-            action = str(parsed.get('action', '')).strip()
-            title = str(parsed.get('title', '')).strip()
+            label = str(parsed.get("label", "")).strip()
+            reason = str(parsed.get("reason", "")).strip()
+            action = str(parsed.get("action", "")).strip()
+            title  = str(parsed.get("title", "")).strip()
+            rv = parsed.get("related", [])
+            related = [str(x).strip() for x in rv] if isinstance(rv, list) else []
             try:
-                rel_val = parsed.get('related', [])
-                if isinstance(rel_val, list):
-                    related = [str(x).strip() for x in rel_val if str(x).strip()]
-                elif isinstance(rel_val, str):
-                    # カンマ区切り文字列にも耐性
-                    related = [s.strip() for s in rel_val.split(',') if s.strip()]
-            except Exception:
-                related = []
-            try:
-                confidence = float(parsed.get('confidence')) if parsed.get('confidence') is not None else None
+                confidence = float(parsed.get("confidence")) if parsed.get("confidence") is not None else None
             except Exception:
                 confidence = None
         else:
-            # 解析失敗時は生テキストをlabelに
             label = raw_text
             reason = "JSON解析に失敗しました"
             action = ""
-            title = ""
+            title  = ""
             related = []
             confidence = None
 
-        result = label
-        
-        # メタ情報抽出
+        # 返却
         usage = None
         try:
-            if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
+            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
                 usage = {
-                    "prompt_token_count": getattr(response.usage_metadata, "prompt_token_count", None),
-                    "candidates_token_count": getattr(response.usage_metadata, "candidates_token_count", None),
-                    "total_token_count": getattr(response.usage_metadata, "total_token_count", None),
+                    "prompt_token_count": getattr(resp.usage_metadata, "prompt_token_count", None),
+                    "candidates_token_count": getattr(resp.usage_metadata, "candidates_token_count", None),
+                    "total_token_count": getattr(resp.usage_metadata, "total_token_count", None),
                 }
         except Exception:
             usage = None
 
-        prompt_feedback = None
-        try:
-            if hasattr(response, "prompt_feedback") and response.prompt_feedback is not None:
-                prompt_feedback = {
-                    "block_reason": getattr(response.prompt_feedback, "block_reason", None),
-                    "safety_ratings": [
-                        {
-                            "category": getattr(r, "category", None),
-                            "probability": getattr(r, "probability", None),
-                        }
-                        for r in getattr(response.prompt_feedback, "safety_ratings", []) or []
-                    ],
-                }
-        except Exception:
-            prompt_feedback = None
-
         candidates = None
         try:
-            if hasattr(response, "candidates") and response.candidates is not None:
+            if hasattr(resp, "candidates") and resp.candidates:
                 candidates = []
-                for c in response.candidates:
-                    candidates.append(
-                        {
-                            "finish_reason": getattr(c, "finish_reason", None),
-                            "safety_ratings": [
-                                {
-                                    "category": getattr(r, "category", None),
-                                    "probability": getattr(r, "probability", None),
-                                }
-                                for r in getattr(c, "safety_ratings", []) or []
-                            ],
-                            "content": getattr(c, "content", None).parts[0].text if getattr(c, "content", None) and getattr(getattr(c, "content", None), "parts", None) else None,
-                        }
-                    )
+                for c in resp.candidates:
+                    candidates.append({
+                        "finish_reason": getattr(c, "finish_reason", None),
+                        "content": getattr(c, "content", None).parts[0].text
+                                   if getattr(c, "content", None) and getattr(getattr(c, "content", None), "parts", None) else None,
+                    })
         except Exception:
             candidates = None
-            
+
+        return jsonify({
+            "result": label,
+            "raw": raw_text,
+            "label": label,
+            "reason": reason,
+            "action": action,
+            "title": title,
+            "confidence": confidence,
+            "meta": {"usage": usage, "candidates": candidates}
+        })
+
     except Exception as e:
-        result = f"エラー: {str(e)}"
-        raw_text = result
-        label = result
-        reason = f"エラーが発生しました: {str(e)}"
-        action = ""
-        title = ""
-        related = []
-        confidence = None
-        usage = None
-        prompt_feedback = None
-        candidates = None
+        return jsonify({
+            "result": f"エラー: {e}",
+            "raw": str(e),
+            "label": "エラー",
+            "reason": f"エラーが発生しました: {e}",
+            "action": "",
+            "title": "",
+            "confidence": None,
+            "meta": None
+        }), 500
 
-    # 入力テキストの埋め込みベクトルを生成（768次元）
-    embedding_str = None
-    # DB未使用モード: 以降の埋め込み生成とDB登録はスキップ
-    return jsonify({
-        'result': result, 
-        'raw': raw_text,
-        'label': label,
-        'reason': reason,
-        'action': action,
-        'title': title,
-        'confidence': confidence,
-        'meta': { 
-            'usage': usage, 
-            'prompt_feedback': prompt_feedback, 
-            'candidates': candidates 
-        }
-    })
-
-    try:
-        emb = genai.embed_content(
-            model='text-embedding-004',  # 768次元のテキスト埋め込み
-            content=ticket,
-        )
-        # ライブラリの戻り形に揺れがあるため両対応
-        vec = None
-        if isinstance(emb, dict):
-            # 典型: { 'embedding': [..floats..] }
-            if isinstance(emb.get('embedding'), list):
-                vec = emb.get('embedding')
-            # まれ: { 'embedding': { 'values': [...] } }
-            elif isinstance(emb.get('embedding'), dict):
-                vec = emb['embedding'].get('values') or emb['embedding'].get('value')
-        # 文字列表現にして pgvector に投入（例: '[0.1, 0.2, ...]')
-        if isinstance(vec, list) and len(vec) > 0:
-            embedding_str = '[' + ','.join(str(float(x)) for x in vec) + ']'
-    except Exception as _:
-        embedding_str = None
-
-    # --- ここからDB登録処理 ---
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASS
-        )
-        with conn:
-            with conn.cursor() as cur:
-                # embedding カラムの有無を確認してから INSERT 内容を切り替え
-                cur.execute(
-                    """
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name   = 'tickets'
-                      AND column_name  = 'embedding'
-                    """
-                )
-                has_embedding_col = cur.fetchone() is not None
-
-                if has_embedding_col:
-                    cur.execute(
-                        """
-                        INSERT INTO tickets (input_text, label, reason, confidence, recommended_action, embedding)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (ticket, label, reason, confidence, action, embedding_str)
-                    )
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO tickets (input_text, label, reason, confidence, recommended_action)
-                        VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (ticket, label, reason, confidence, action)
-                    )
-        conn.close()
-    except Exception as db_exc:
-        print(f"[DB ERROR] {db_exc}")
-    # --- DB登録ここまで ---
-
-    return jsonify({
-        'result': result, 
-        'raw': raw_text,
-        'label': label,
-        'reason': reason,
-        'action': action,
-        'title': title,
-        'confidence': confidence,
-        'meta': { 
-            'usage': usage, 
-            'prompt_feedback': prompt_feedback, 
-            'candidates': candidates 
-        }
-    })
-
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
+# ===== 5) SPAキャッチオール（/api/* は触らない） =====
+@app.route('/', defaults={'path': ''}, methods=['GET', 'OPTIONS'])
+@app.route('/<path:path>', methods=['GET', 'OPTIONS'])
 def serve_frontend(path):
-    """React のビルド済みファイルを配信する。"""
-    if app.static_folder and os.path.isdir(app.static_folder):
-        requested = os.path.join(app.static_folder, path)
-        index_path = os.path.join(app.static_folder, 'index.html')
+    # /api/ から始まるパスはここで処理しない
+    if request.path.startswith('/api/'):
+        abort(404)
+    return 'frontend placeholder', 200   # 開発中はプレースホルダで十分
 
-        if path and os.path.isfile(requested):
-            return send_from_directory(app.static_folder, path)
-
-        if os.path.isfile(index_path):
-            return send_from_directory(app.static_folder, 'index.html')
-
-    message = (
-        "前提となるフロントエンドのビルド成果物が見つかりません。\n"
-        "`npm run build` を実行してからアプリを起動してください。"
-    )
-    return message, 404
-
+# ===== 6) 最後に一度だけ run =====
 if __name__ == '__main__':
-#    app.run(debug=True)
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # 末尾スラッシュ差での取りこぼしを避けたい場合は次を有効化
+    # app.url_map.strict_slashes = False
+    app.run(host='0.0.0.0', port=5000, debug=True)

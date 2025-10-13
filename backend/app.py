@@ -6,7 +6,16 @@ import google.generativeai as genai
 # ===== 1) アプリ生成（staticはつけない：開発時は不要） =====
 app = Flask(__name__)
 # API 配下にだけ CORS を許可
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+#CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+
+mode = os.getenv("FLASK_ENV", "development")
+
+if mode == "production":
+    origins = ["https://daisuke-totsuka.github.io"]
+else:
+    origins = ["*"]
+
+CORS(app, resources={r"/*": {"origins": origins}})
 
 # ===== 2) ヘルスチェック =====
 @app.route('/api/health', methods=['GET'])

@@ -24,6 +24,9 @@ def health():
 
 # ===== 3) Gemini 初期化（重複は削除） =====
 API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+# ✅ デバッグ用ログ出力（Renderログで確認できる）
+print("=== GEMINI_API_KEY loaded:", bool(API_KEY))
+print("=== GEMINI_API_KEY value (masked):", API_KEY[:5] + "*****" if API_KEY else "None")
 if not API_KEY:
     raise EnvironmentError(
         "Gemini APIキーが見つかりません。PowerShell で "

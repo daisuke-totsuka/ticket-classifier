@@ -43,16 +43,16 @@ def predict():
     ticket = data.get('ticket', '')
 
     # ★ダミー早期レスポンス（切り分け用）
-    return jsonify({
-        "result": "DUMMY",
-        "raw": "dummy",
-        "label": "テスト",
-        "reason": "ルート到達確認のためのダミー応答",
-        "action": "なし",
-        "title": "到達OK",
-        "confidence": 1.0,
-        "meta": None
-         }), 200
+    #return jsonify({
+    #    "result": "DUMMY",
+    #    "raw": "dummy",
+    #    "label": "テスト",
+    #    "reason": "ルート到達確認のためのダミー応答",
+    #    "action": "なし",
+    #    "title": "到達OK",
+    #    "confidence": 1.0,
+    #    "meta": None
+    #     }), 200
     
     prompt = (
         "次のチケット内容を分析し、厳密なJSONのみで返答してください。\n"

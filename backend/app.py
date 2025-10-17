@@ -40,8 +40,22 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 @app.route('/api/predict', methods=['POST'])
 @app.route('/api/ask', methods=['POST'])
 def predict():
-    data = request.get_json() or {}
-    ticket = data.get('ticket', '')
+    #data = request.get_json() or {}
+    #ticket = data.get('ticket', '')
+    data = request.get_json(silent=True) or {}
+    # フロントのキーが 'ticket' / 'text' どちらでも拾えるように
+    ticket = (data.get('ticket') or data.get('text') or '').strip()
+
+    if not ticket:
+        return jsonify({
+            "result": "エラー",
+            "label": "エラー",
+            "reason": "入力が空です。",
+            "action": "",
+            "title": "",
+            "confidence": None,
+            "meta": None
+        }), 400
 
     # ★ダミー早期レスポンス（切り分け用）
     #return jsonify({

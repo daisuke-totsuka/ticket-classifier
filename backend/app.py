@@ -1,4 +1,4 @@
-import os, json
+import os, json, textwrap
 from flask import Flask, request, jsonify, abort
 from flask_cors import CORS
 import google.generativeai as genai
@@ -40,8 +40,6 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 @app.route('/api/predict', methods=['POST'])
 @app.route('/api/ask', methods=['POST'])
 def predict():
-    #data = request.get_json() or {}
-    #ticket = data.get('ticket', '')
     data = request.get_json(silent=True) or {}
     # フロントのキーが 'ticket' / 'text' どちらでも拾えるように
     ticket = (data.get('ticket') or data.get('text') or '').strip()
@@ -57,85 +55,56 @@ def predict():
             "meta": None
         }), 400
 
-    # ★ダミー早期レスポンス（切り分け用）
-    #return jsonify({
-    #    "result": "DUMMY",
-    #    "raw": "dummy",
-    #    "label": "テスト",
-    #    "reason": "ルート到達確認のためのダミー応答",
-    #    "action": "なし",
-    #    "title": "到達OK",
-    #    "confidence": 1.0,
-    #    "meta": None
-    #     }), 200
-    
-    #prompt = (
-      #  "次のチケット内容を分析し、厳密なJSONのみで返答してください。\n"
-      #  "日本語で、以下のキーを必ず含めてください: label, reason, confidence, action, title, related。\n"
-      #  "- label: 分類ラベル\n"
-      #  "- reason: 150〜400文字程度で根拠を具体的に\n"
-      #  "- action: 調査手順/暫定回避/恒久対策を簡潔に\n"
-      #  "- confidence: 0.0〜1.0\n"
-      #  "- title: 短く明確な分類タイトル\n"
-      #  "- related: 3〜6個の関連語配列\n"
-      # "他の文字やマークダウン、説明は出力しないでください。\n"
-      # f"チケット内容: '{ticket}'\n"
-      # "チケット内容: '{ticket}'\n"
-      #  "出力例: {\"label\":\"障害対応\",\"reason\":\"...\",\"confidence\":0.82,"
-      # "\"action\":\"1) ログ採取 ...\",\"title\":\"インシデント / 障害対応\","
-      # "\"related\":[\"サービス停止\",\"エラー調査\",\"復旧対応\"]}"
-    #)
-    prompt = (
-    "あなたはヘルプデスクの一次分類AIです。以下のチケット本文を分析し、"
-    "必ず厳密なJSONのみで返答してください。説明文やマークダウンは不要です。\n\n"
-    "【目的】\n"
-    "- チケットを以下の項目に分類します。\n"
-    "  label: 分類ラベル（例: 障害対応 / 機能要望 / 質問 / その他）\n"
-    "  reason: 分類の理由（150〜400文字程度）\n"
-    "  action: 推奨される対応（調査手順/暫定回避/恒久対策）\n"
-    "  confidence: 0.0〜1.0の信頼度（数値）\n"
-    "  title: 短く明確なタイトル\n"
-    "  related: 3〜6個の関連語を配列で\n\n"
-    "【安全ガード】\n"
-    "- 個人情報（氏名・住所・電話・メールなど）は出力せず \"[PII]\" に置換。\n"
-    "- 資格情報やトークン、URLキーなどは \"[SECRET]\" に置換。\n"
-    "- 有害・暴力的・性的・差別的な表現は出力しない。\n"
-    "- 実在人物や組織を断定的に批評しない。\n"
-    "- 医療・法律・犯罪・政治的な助言を行わない。\n\n"
-    "【分類不能時の出力ルール】\n"
-    "- 内容が曖昧・挨拶文・ノイズなどで分類できない場合も、必ず次のJSONを返す:\n"
-    "{\"label\":\"エラー\",\"title\":\"その他（要トリアージ）\","
-    "\"reason\":\"入力内容が分類に適さないため要確認。\",\"action\":\"\","
-    "\"confidence\":0.0,\"related\":[]}\n\n"
-    "【出力形式（STRICT JSON ONLY）】\n"
-    "- 出力はJSONのみ（キー: label, reason, action, confidence, title, related）\n"
-    "- コードフェンス（```）や説明文は付けない。\n"
-    "- 前後に文を追加しない。出力例以外の文字は一切含めない。\n\n"
-    f"チケット内容:\n{ticket}\n\n"
-    "出力例:\n"
-    "{\"label\":\"障害対応\",\"reason\":\"ログエラーが発生しサービスが停止しているため、障害対応と判断。\","
-    "\"action\":\"1) ログ調査 2) 再起動実施 3) 原因解析\","
-    "\"confidence\":0.92,\"title\":\"ログエラーによる障害\",\"related\":[\"サービス停止\",\"復旧対応\",\"調査\"]}"
-    )
+    prompt = textwrap.dedent(f"""
+        あなたはヘルプデスクの一次分類AIです。以下のチケット本文を分析し、
+        必ず厳密なJSONのみで返答してください。説明文やマークダウンは不要です。
 
-def _safe_pick_text(r):
-    try:
-        cand = r.candidates[0] if getattr(r, "candidates", None) else None
-        finish = getattr(cand, "finish_reason", None)
-        feedback = getattr(r, "prompt_feedback", None)
+        【目的】
+        - チケットを以下の項目に分類します。
+          label: 分類ラベル（例: 障害対応 / 機能要望 / 質問 / その他）
+          reason: 分類の理由（150〜400文字程度）
+          action: 推奨される対応（調査手順/暫定回避/恒久対策）
+          confidence: 0.0〜1.0の信頼度（数値）
+          title: 短く明確なタイトル
+          related: 3〜6個の関連語を配列で
 
-        # parts が存在するときだけテキストを抽出
-        if cand and getattr(cand, "content", None) and getattr(cand.content, "parts", None):
-            parts = [p.text for p in cand.content.parts if hasattr(p, "text")]
-            txt = "".join(parts).strip()
-            return txt if txt else None, finish, feedback
+        【安全ガード】
+        - 個人情報（氏名・住所・電話・メールなど）は出力せず "[PII]" に置換。
+        - 資格情報やトークン、URLキーなどは "[SECRET]" に置換。
+        - 有害・暴力的・性的・差別的な表現は出力しない。
+        - 実在人物や組織を断定的に批評しない。
+        - 医療・法律・犯罪・政治的な助言を行わない。
 
-        # partsが空の場合
-        return None, finish, feedback
+        【分類不能時の出力ルール】
+        - 内容が曖昧・挨拶文・ノイズなどで分類できない場合も、必ず次のJSONを返す:
+          {"label":"エラー","title":"その他（要トリアージ）","reason":"入力内容が分類に適さないため要確認。","action":"","confidence":0.0,"related":[]}
 
-    except Exception:
-        return None, None, None
+        【出力形式（STRICT JSON ONLY）】
+        - 出力はJSONのみ（キー: label, reason, action, confidence, title, related）
+        - コードフェンス（```）や説明文は付けない。
+        - 前後に文を追加しない。出力例以外の文字は一切含めない。
 
+        チケット内容:
+        {ticket}
+
+        出力例:
+        {"label":"障害対応","reason":"ログエラーが発生しサービスが停止しているため、障害対応と判断。","action":"1) ログ調査 2) 再起動実施 3) 原因解析","confidence":0.92,"title":"ログエラーによる障害","related":["サービス停止","復旧対応","調査"]}
+    """).strip()
+
+    def _safe_pick_text(response):
+        try:
+            cand = response.candidates[0] if getattr(response, 'candidates', None) else None
+            finish = getattr(cand, 'finish_reason', None)
+            feedback = getattr(response, 'prompt_feedback', None)
+
+            if cand and getattr(cand, 'content', None) and getattr(cand.content, 'parts', None):
+                parts = [p.text for p in cand.content.parts if hasattr(p, 'text')]
+                txt = ''.join(parts).strip()
+                return txt if txt else None, finish, feedback
+
+            return None, finish, feedback
+        except Exception:
+            return None, None, None
 
     try:
         resp = model.generate_content(
@@ -145,10 +114,9 @@ def _safe_pick_text(r):
                 max_output_tokens=768
             )
         )
-    
+
         raw_text, finish_reason, feedback = _safe_pick_text(resp)
 
-        # SAFETYブロックや空返答のときは、ここでフォールバックJSONを即返す
         if not raw_text:
             return jsonify({
                 "result": "エラー",
@@ -159,82 +127,74 @@ def _safe_pick_text(r):
                 "title": "",
                 "confidence": None,
                 "meta": {"feedback": str(feedback)}
-        })
-        #cands = getattr(resp, "candidates", None) or []
-        #if not cands:
-        #  fb = getattr(resp, "prompt_feedback", None)
-        #  reason = getattr(fb, "block_reason", None) if fb else None
-        #  # ここで安全ブロック時の文言やリトライ方針を返す
-        # return jsonify({"error": "AI出力がブロックされました", "block_reason": str(reason)}), 400
+            }), 502
 
-        #raw_text = (resp.text or "").strip()
-    except Exception as e:
-
-        # --- JSON抽出 ---
         parsed = None
         try:
             s = raw_text.strip()
-            if s.startswith("```") and s.endswith("```"):
-                s = s.strip("`\n").split("\n", 1)[-1]
-            if "{" in s and "}" in s:
-                s = s[s.find("{"): s.rfind("}")+1]
+            if s.startswith('```') and s.endswith('```'):
+                s = s.strip('`\n').split('\n', 1)[-1]
+            if '{' in s and '}' in s:
+                s = s[s.find('{'): s.rfind('}') + 1]
             parsed = json.loads(s)
         except Exception:
             parsed = None
 
         if isinstance(parsed, dict):
-            label = str(parsed.get("label", "")).strip()
-            reason = str(parsed.get("reason", "")).strip()
-            action = str(parsed.get("action", "")).strip()
-            title  = str(parsed.get("title", "")).strip()
-            rv = parsed.get("related", [])
+            label = str(parsed.get('label', '')).strip()
+            reason = str(parsed.get('reason', '')).strip()
+            action = str(parsed.get('action', '')).strip()
+            title = str(parsed.get('title', '')).strip()
+            rv = parsed.get('related', [])
             related = [str(x).strip() for x in rv] if isinstance(rv, list) else []
             try:
-                confidence = float(parsed.get("confidence")) if parsed.get("confidence") is not None else None
+                confidence = float(parsed.get('confidence')) if parsed.get('confidence') is not None else None
             except Exception:
                 confidence = None
         else:
             label = raw_text
-            reason = "JSON解析に失敗しました"
-            action = ""
-            title  = ""
+            reason = 'JSON解析に失敗しました'
+            action = ''
+            title = ''
             related = []
             confidence = None
 
-        # 返却
         usage = None
         try:
-            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
+            if hasattr(resp, 'usage_metadata') and resp.usage_metadata:
                 usage = {
-                    "prompt_token_count": getattr(resp.usage_metadata, "prompt_token_count", None),
-                    "candidates_token_count": getattr(resp.usage_metadata, "candidates_token_count", None),
-                    "total_token_count": getattr(resp.usage_metadata, "total_token_count", None),
+                    'prompt_token_count': getattr(resp.usage_metadata, 'prompt_token_count', None),
+                    'candidates_token_count': getattr(resp.usage_metadata, 'candidates_token_count', None),
+                    'total_token_count': getattr(resp.usage_metadata, 'total_token_count', None),
                 }
         except Exception:
             usage = None
 
         candidates = None
         try:
-            if hasattr(resp, "candidates") and resp.candidates:
+            if hasattr(resp, 'candidates') and resp.candidates:
                 candidates = []
                 for c in resp.candidates:
+                    text_part = None
+                    if getattr(c, 'content', None) and getattr(c.content, 'parts', None):
+                        first_part = c.content.parts[0]
+                        text_part = getattr(first_part, 'text', None)
                     candidates.append({
-                        "finish_reason": getattr(c, "finish_reason", None),
-                        "content": getattr(c, "content", None).parts[0].text
-                                   if getattr(c, "content", None) and getattr(getattr(c, "content", None), "parts", None) else None,
+                        'finish_reason': getattr(c, 'finish_reason', None),
+                        'content': text_part,
                     })
         except Exception:
             candidates = None
 
         return jsonify({
-            "result": label,
-            "raw": raw_text,
-            "label": label,
-            "reason": reason,
-            "action": action,
-            "title": title,
-            "confidence": confidence,
-            "meta": {"usage": usage, "candidates": candidates}
+            'result': label,
+            'raw': raw_text,
+            'label': label,
+            'reason': reason,
+            'action': action,
+            'title': title,
+            'confidence': confidence,
+            'meta': {'usage': usage, 'candidates': candidates}
         })
 
     except Exception as e:
@@ -260,6 +220,3 @@ def serve_frontend(path):
 
 # ===== 6) 最後に一度だけ run =====
 if __name__ == '__main__':
-    # 末尾スラッシュ差での取りこぼしを避けたい場合は次を有効化
-    # app.url_map.strict_slashes = False
-    app.run(host='0.0.0.0', port=5000, debug=True)

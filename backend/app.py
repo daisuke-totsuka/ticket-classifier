@@ -102,8 +102,21 @@ def predict():
     "{\"label\":\"障害対応\",\"reason\":\"ログエラーが発生しサービスが停止しているため、障害対応と判断。\","
     "\"action\":\"1) ログ調査 2) 再起動実施 3) 原因解析\","
     "\"confidence\":0.92,\"title\":\"ログエラーによる障害\",\"related\":[\"サービス停止\",\"復旧対応\",\"調査\"]}"
-)
+    )
 
+    def _safe_pick_text(r):
+       try:
+            cand = r.candidates[0] if getattr(r, "candidates", None) else None
+            finish = getattr(cand, "finish_reason", None)
+            feedback = getattr(r, "prompt_feedback", None)
+            # parts があるときだけテキストを連結
+            if cand and getattr(cand, "content", None) and getattr(cand.content, "parts", None):
+               parts = [p.text for p in cand.content.parts if hasattr(p, "text")]
+               txt = "".join(parts).strip()
+               return txt if txt else None, finish, feedback
+            return None, finish, feedback
+        except Exception:
+            return None, None, None
 
     try:
         resp = model.generate_content(
@@ -113,6 +126,21 @@ def predict():
                 max_output_tokens=768
             )
         )
+    
+    raw_text, finish_reason, feedback = _safe_pick_text(resp)
+
+# SAFETYブロックや空返答のときは、ここでフォールバックJSONを即返す
+if not raw_text:
+    return jsonify({
+        "result": "エラー",
+        "raw": f"finish_reason={finish_reason}",
+        "label": "エラー",
+        "reason": "安全性フィルターにより応答が返りませんでした。入力の機微情報を[PII]/[SECRET]に置換して再試行してください。",
+        "action": "",
+        "title": "",
+        "confidence": None,
+        "meta": {"feedback": str(feedback)}
+    })
         #cands = getattr(resp, "candidates", None) or []
         #if not cands:
         #  fb = getattr(resp, "prompt_feedback", None)
@@ -120,7 +148,7 @@ def predict():
         #  # ここで安全ブロック時の文言やリトライ方針を返す
         # return jsonify({"error": "AI出力がブロックされました", "block_reason": str(reason)}), 400
 
-        raw_text = (resp.text or "").strip()
+        #raw_text = (resp.text or "").strip()
 
         # --- JSON抽出 ---
         parsed = None

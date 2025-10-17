@@ -33,7 +33,8 @@ if not API_KEY:
         "`$env:GEMINI_API_KEY=\"YOUR_KEY\"` または `$env:GOOGLE_API_KEY=\"YOUR_KEY\"` を設定してください。"
     )
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+#model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # ===== 4) 予測API（/api/predict と /api/ask を同一関数で受ける） =====
 @app.route('/api/predict', methods=['POST'])
@@ -54,21 +55,55 @@ def predict():
     #    "meta": None
     #     }), 200
     
+    #prompt = (
+      #  "次のチケット内容を分析し、厳密なJSONのみで返答してください。\n"
+      #  "日本語で、以下のキーを必ず含めてください: label, reason, confidence, action, title, related。\n"
+      #  "- label: 分類ラベル\n"
+      #  "- reason: 150〜400文字程度で根拠を具体的に\n"
+      #  "- action: 調査手順/暫定回避/恒久対策を簡潔に\n"
+      #  "- confidence: 0.0〜1.0\n"
+      #  "- title: 短く明確な分類タイトル\n"
+      #  "- related: 3〜6個の関連語配列\n"
+      # "他の文字やマークダウン、説明は出力しないでください。\n"
+      # f"チケット内容: '{ticket}'\n"
+      # "チケット内容: '{ticket}'\n"
+      #  "出力例: {\"label\":\"障害対応\",\"reason\":\"...\",\"confidence\":0.82,"
+      # "\"action\":\"1) ログ採取 ...\",\"title\":\"インシデント / 障害対応\","
+      # "\"related\":[\"サービス停止\",\"エラー調査\",\"復旧対応\"]}"
+    #)
     prompt = (
-        "次のチケット内容を分析し、厳密なJSONのみで返答してください。\n"
-        "日本語で、以下のキーを必ず含めてください: label, reason, confidence, action, title, related。\n"
-        "- label: 分類ラベル\n"
-        "- reason: 150〜400文字程度で根拠を具体的に\n"
-        "- action: 調査手順/暫定回避/恒久対策を簡潔に\n"
-        "- confidence: 0.0〜1.0\n"
-        "- title: 短く明確な分類タイトル\n"
-        "- related: 3〜6個の関連語配列\n"
-        "他の文字やマークダウン、説明は出力しないでください。\n"
-        f"チケット内容: '{ticket}'\n"
-        "出力例: {\"label\":\"障害対応\",\"reason\":\"...\",\"confidence\":0.82,"
-        "\"action\":\"1) ログ採取 ...\",\"title\":\"インシデント / 障害対応\","
-        "\"related\":[\"サービス停止\",\"エラー調査\",\"復旧対応\"]}"
-    )
+    "あなたはヘルプデスクの一次分類AIです。以下のチケット本文を分析し、"
+    "必ず厳密なJSONのみで返答してください。説明文やマークダウンは不要です。\n\n"
+    "【目的】\n"
+    "- チケットを以下の項目に分類します。\n"
+    "  label: 分類ラベル（例: 障害対応 / 機能要望 / 質問 / その他）\n"
+    "  reason: 分類の理由（150〜400文字程度）\n"
+    "  action: 推奨される対応（調査手順/暫定回避/恒久対策）\n"
+    "  confidence: 0.0〜1.0の信頼度（数値）\n"
+    "  title: 短く明確なタイトル\n"
+    "  related: 3〜6個の関連語を配列で\n\n"
+    "【安全ガード】\n"
+    "- 個人情報（氏名・住所・電話・メールなど）は出力せず \"[PII]\" に置換。\n"
+    "- 資格情報やトークン、URLキーなどは \"[SECRET]\" に置換。\n"
+    "- 有害・暴力的・性的・差別的な表現は出力しない。\n"
+    "- 実在人物や組織を断定的に批評しない。\n"
+    "- 医療・法律・犯罪・政治的な助言を行わない。\n\n"
+    "【分類不能時の出力ルール】\n"
+    "- 内容が曖昧・挨拶文・ノイズなどで分類できない場合も、必ず次のJSONを返す:\n"
+    "{\"label\":\"エラー\",\"title\":\"その他（要トリアージ）\","
+    "\"reason\":\"入力内容が分類に適さないため要確認。\",\"action\":\"\","
+    "\"confidence\":0.0,\"related\":[]}\n\n"
+    "【出力形式（STRICT JSON ONLY）】\n"
+    "- 出力はJSONのみ（キー: label, reason, action, confidence, title, related）\n"
+    "- コードフェンス（```）や説明文は付けない。\n"
+    "- 前後に文を追加しない。出力例以外の文字は一切含めない。\n\n"
+    f"チケット内容:\n{ticket}\n\n"
+    "出力例:\n"
+    "{\"label\":\"障害対応\",\"reason\":\"ログエラーが発生しサービスが停止しているため、障害対応と判断。\","
+    "\"action\":\"1) ログ調査 2) 再起動実施 3) 原因解析\","
+    "\"confidence\":0.92,\"title\":\"ログエラーによる障害\",\"related\":[\"サービス停止\",\"復旧対応\",\"調査\"]}"
+)
+
 
     try:
         resp = model.generate_content(
@@ -78,6 +113,13 @@ def predict():
                 max_output_tokens=768
             )
         )
+        #cands = getattr(resp, "candidates", None) or []
+        #if not cands:
+        #  fb = getattr(resp, "prompt_feedback", None)
+        #  reason = getattr(fb, "block_reason", None) if fb else None
+        #  # ここで安全ブロック時の文言やリトライ方針を返す
+        # return jsonify({"error": "AI出力がブロックされました", "block_reason": str(reason)}), 400
+
         raw_text = (resp.text or "").strip()
 
         # --- JSON抽出 ---

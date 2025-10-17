@@ -104,19 +104,24 @@ def predict():
     "\"confidence\":0.92,\"title\":\"ログエラーによる障害\",\"related\":[\"サービス停止\",\"復旧対応\",\"調査\"]}"
     )
 
-    def _safe_pick_text(r):
-       try:
-            cand = r.candidates[0] if getattr(r, "candidates", None) else None
-            finish = getattr(cand, "finish_reason", None)
-            feedback = getattr(r, "prompt_feedback", None)
-            # parts があるときだけテキストを連結
-            if cand and getattr(cand, "content", None) and getattr(cand.content, "parts", None):
-               parts = [p.text for p in cand.content.parts if hasattr(p, "text")]
-               txt = "".join(parts).strip()
-               return txt if txt else None, finish, feedback
-            return None, finish, feedback
-        except Exception:
-            return None, None, None
+def _safe_pick_text(r):
+    try:
+        cand = r.candidates[0] if getattr(r, "candidates", None) else None
+        finish = getattr(cand, "finish_reason", None)
+        feedback = getattr(r, "prompt_feedback", None)
+
+        # parts が存在するときだけテキストを抽出
+        if cand and getattr(cand, "content", None) and getattr(cand.content, "parts", None):
+            parts = [p.text for p in cand.content.parts if hasattr(p, "text")]
+            txt = "".join(parts).strip()
+            return txt if txt else None, finish, feedback
+
+        # partsが空の場合
+        return None, finish, feedback
+
+    except Exception:
+        return None, None, None
+
 
     try:
         resp = model.generate_content(

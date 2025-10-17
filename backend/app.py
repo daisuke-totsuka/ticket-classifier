@@ -132,20 +132,20 @@ def _safe_pick_text(r):
             )
         )
     
-    raw_text, finish_reason, feedback = _safe_pick_text(resp)
+        raw_text, finish_reason, feedback = _safe_pick_text(resp)
 
-# SAFETYブロックや空返答のときは、ここでフォールバックJSONを即返す
-if not raw_text:
-    return jsonify({
-        "result": "エラー",
-        "raw": f"finish_reason={finish_reason}",
-        "label": "エラー",
-        "reason": "安全性フィルターにより応答が返りませんでした。入力の機微情報を[PII]/[SECRET]に置換して再試行してください。",
-        "action": "",
-        "title": "",
-        "confidence": None,
-        "meta": {"feedback": str(feedback)}
-    })
+        # SAFETYブロックや空返答のときは、ここでフォールバックJSONを即返す
+        if not raw_text:
+            return jsonify({
+                "result": "エラー",
+                "raw": f"finish_reason={finish_reason}",
+                "label": "エラー",
+                "reason": "安全性フィルターにより応答が返りませんでした。入力の機微情報を[PII]/[SECRET]に置換して再試行してください。",
+                "action": "",
+                "title": "",
+                "confidence": None,
+                "meta": {"feedback": str(feedback)}
+        })
         #cands = getattr(resp, "candidates", None) or []
         #if not cands:
         #  fb = getattr(resp, "prompt_feedback", None)
@@ -154,6 +154,7 @@ if not raw_text:
         # return jsonify({"error": "AI出力がブロックされました", "block_reason": str(reason)}), 400
 
         #raw_text = (resp.text or "").strip()
+    except Exception as e:
 
         # --- JSON抽出 ---
         parsed = None

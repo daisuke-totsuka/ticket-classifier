@@ -29,7 +29,7 @@ def ask() -> tuple:
         return jsonify({"error": "ticketが必要です。"}), 400
 
     prompt = (
-        "以下のチケット内容を分析し、JSON形式だけで回答してください。\n"
+        "以下のチケット内容を分析してください。\n"
         f"{ticket}"
     )
 
@@ -39,12 +39,18 @@ def ask() -> tuple:
         return jsonify({"error": f"Gemini API呼び出しに失敗しました: {exc}"}), 502
 
     text = (getattr(response, "text", None) or "").strip()
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return jsonify({"error": "Geminiの応答をJSONとして解釈できませんでした。", "raw": text}), 502
 
-    return jsonify(payload)
+    # そのまま返す
+    return jsonify({
+        "raw_response": text
+    }), 200
+    
+    #try:
+    #    payload = json.loads(text)
+    # except json.JSONDecodeError:
+    #    return jsonify({"error": "Geminiの応答をJSONとして解釈できませんでした。", "raw": text}), 502
+
+    #return jsonify(payload)
 
 
 if __name__ == "__main__":

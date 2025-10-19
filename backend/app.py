@@ -1,4 +1,5 @@
-import os, json, textwrap
+import os, json, textwrap, re
+from string import Template
 from flask import Flask, request, jsonify, abort
 from flask_cors import CORS
 import google.generativeai as genai
@@ -42,7 +43,43 @@ model = genai.GenerativeModel('gemini-2.5-flash')
 def predict():
     data = request.get_json(silent=True) or {}
     # フロントのキーが 'ticket' / 'text' どちらでも拾えるように
-    ticket = (data.get('ticket') or data.get('text') or '').strip()
+
+    def _sanitize_ticket(text: str) -> str:
+        if not text:
+            return text
+
+        sanitized = text
+
+        pii_patterns = [
+            # Email addresses
+            (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "[PII]"),
+            # Domestic phone numbers such as 03-1234-5678 / 09012345678
+            (re.compile(r"(?<!\d)(?:0\d{1,4}-\d{1,4}-\d{3,4}|0\d{9,10})(?!\d)"), "[PII]"),
+            # Credit card like 16 digits
+            (re.compile(r"(?<!\d)(?:\d{4}[ -]?){3}\d{4}(?!\d)"), "[PII]"),
+        ]
+
+        for pattern, replacement in pii_patterns:
+            sanitized = pattern.sub(replacement, sanitized)
+
+        # Replace credential style assignments (e.g. password=xxxx, token: xxxx)
+        def _secret_replacer(match: re.Match) -> str:
+            key = match.group('key')
+            sep = match.group('sep')
+            return f"{key}{sep}[SECRET]"
+
+        sanitized = re.sub(
+            r"(?i)(?P<key>password|passcode|secret|token|apikey|api_key|api-key)\s*(?P<sep>[:=]\s*)(?P<value>[^\s,;]{4,})",
+            _secret_replacer,
+            sanitized,
+        )
+
+        # Long base64 / hex like strings (20+ length) often represent secrets
+        sanitized = re.sub(r"(?i)\b[A-Z0-9+/=_-]{20,}\b", "[SECRET]", sanitized)
+
+        return sanitized
+
+    sanitized_ticket = _sanitize_ticket(ticket)
 
     if not ticket:
         return jsonify({
@@ -55,7 +92,7 @@ def predict():
             "meta": None
         }), 400
 
-    prompt = textwrap.dedent(f"""
+    prompt_template = Template(textwrap.dedent("""
         あなたはヘルプデスクの一次分類AIです。以下のチケット本文を分析し、
         必ず厳密なJSONのみで返答してください。説明文やマークダウンは不要です。
 
@@ -85,11 +122,13 @@ def predict():
         - 前後に文を追加しない。出力例以外の文字は一切含めない。
 
         チケット内容:
-        {ticket}
+         {sanitized_ticket}
 
         出力例:
         {"label":"障害対応","reason":"ログエラーが発生しサービスが停止しているため、障害対応と判断。","action":"1) ログ調査 2) 再起動実施 3) 原因解析","confidence":0.92,"title":"ログエラーによる障害","related":["サービス停止","復旧対応","調査"]}
-    """).strip()
+    """).strip())
+
+    prompt = prompt_template.safe_substitute(ticket=ticket)
 
     def _safe_pick_text(response):
         try:
@@ -220,3 +259,4 @@ def serve_frontend(path):
 
 # ===== 6) 最後に一度だけ run =====
 if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))

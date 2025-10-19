@@ -34,13 +34,23 @@ function App() {
 
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:5000/api/ask", {
-        //const response = await fetch("http://localhost:5000/predict", {
-        //const response = await fetch("/api/ask", {
+      //const response = await fetch("http://localhost:5000/api/ask", {
+      //const response = await fetch("http://localhost:5000/predict", {
+      const baseUrl =
+        process.env.REACT_APP_GEMINI_CLIENT_BASE_URL || "http://localhost:8000";
+      const endpoint = `${baseUrl.replace(/\/$/, "")}/api/gemini`;
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticket }),
       });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorBody}`);
+      }
+
       const data = await response.json();
       setResult(data.result);
       setRaw(data.raw || "");
@@ -56,7 +66,11 @@ function App() {
           : null
       );
     } catch (error) {
-      setResult("エラー: サーバーに接続できませんでした");
+      const message =
+        error instanceof Error
+          ? `エラー: サーバーに接続できませんでした (${error.message})`
+          : "エラー: サーバーに接続できませんでした";
+      setResult(message);
       setRaw("");
       setMeta(null);
       setLabel("");

@@ -30,10 +30,10 @@ function App() {
       const endpoint = `${baseUrl.replace(/\/$/, "")}/api/ask`;
 
       //const response = await fetch(endpoint, {
-      const response = await fetch("/api/ask", {
+      const response = await fetch("http://localhost:5000/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticket }),
+        body: JSON.stringify({ text: ticket }), // or { ticket }
       });
 
       if (!response.ok) {

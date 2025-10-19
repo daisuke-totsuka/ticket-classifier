@@ -19,11 +19,18 @@ function App() {
 
     setLoading(true);
     try {
-      const baseUrl =
-        process.env.REACT_APP_GEMINI_CLIENT_BASE_URL || "http://localhost:8000";
-      const endpoint = `${baseUrl.replace(/\/$/, "")}/api/gemini`;
+      //const baseUrl =
+      //  process.env.REACT_APP_GEMINI_CLIENT_BASE_URL || "http://localhost:8000";
+      //const endpoint = `${baseUrl.replace(/\/$/, "")}/api/gemini`;
 
-      const response = await fetch(endpoint, {
+      const baseUrl =
+        process.env.REACT_APP_GEMINI_CLIENT_BASE_URL ||
+        process.env.REACT_APP_API_BASE_URL ||
+        "http://localhost:5000";
+      const endpoint = `${baseUrl.replace(/\/$/, "")}/api/ask`;
+
+      //const response = await fetch(endpoint, {
+      const response = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticket }),

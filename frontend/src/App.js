@@ -1,12 +1,59 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import "./App.css";
 
 function App() {
+  const apiBaseUrl = (
+    process.env.REACT_APP_GEMINI_CLIENT_BASE_URL ||
+    process.env.REACT_APP_API_BASE_URL ||
+    "http://localhost:5000"
+  ).replace(/\/$/, "");
+  const COSINE_SIMILARITY_THRESHOLD = 0.93;
+  const askEndpoint = `${apiBaseUrl}/api/ask`;
+  const searchEndpoint = `${apiBaseUrl}/api/search`;
+  const historyEndpoint = `${apiBaseUrl}/api/responses`;
+
   const [ticket, setTicket] = useState("");
   const [responseText, setResponseText] = useState("");
   const [structuredResult, setStructuredResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [relatedResults, setRelatedResults] = useState([]);
+  const [historyItems, setHistoryItems] = useState([]);
+  const [historyError, setHistoryError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+
+  const toTrimmedString = (value) =>
+    value === undefined || value === null ? "" : String(value).trim();
+
+  const toNumberOrNull = (value) => {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const response = await fetch(historyEndpoint);
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      const data = await response.json();
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setHistoryItems(items);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setHistoryError(`履歴の取得に失敗しました: ${message}`);
+      setHistoryItems([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [historyEndpoint]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -17,22 +64,13 @@ function App() {
     // 直前の結果をクリア
     setResponseText("");
     setStructuredResult(null);
+    setRelatedResults([]);
     setErrorMessage("");
+    setHasSubmitted(true);
 
     setLoading(true);
     try {
-      //const baseUrl =
-      //  process.env.REACT_APP_GEMINI_CLIENT_BASE_URL || "http://localhost:8000";
-      //const endpoint = `${baseUrl.replace(/\/$/, "")}/api/gemini`;
-
-      const baseUrl =
-        process.env.REACT_APP_GEMINI_CLIENT_BASE_URL ||
-        process.env.REACT_APP_API_BASE_URL ||
-        "http://localhost:5000";
-      const endpoint = `${baseUrl.replace(/\/$/, "")}/api/ask`;
-
-      //const response = await fetch(endpoint, {
-      const response = await fetch("http://localhost:5000/api/ask", {
+      const response = await fetch(askEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: ticket }), // or { ticket }
@@ -62,17 +100,6 @@ function App() {
           ? data.confidence
           : null;
 
-      const toTrimmedString = (value) =>
-        value === undefined || value === null ? "" : String(value).trim();
-
-      const toNumberOrNull = (value) => {
-        if (value === undefined || value === null) {
-          return null;
-        }
-        const num = Number(value);
-        return Number.isFinite(num) ? num : null;
-      };
-
       const extractFromSegments = (keywords) => {
         for (const keyword of keywords) {
           const hit = segments.find(
@@ -88,7 +115,10 @@ function App() {
         return "";
       };
 
-      const segmentConfidenceText = extractFromSegments(["信頼度", "confidence"]);
+      const segmentConfidenceText = extractFromSegments([
+        "信頼度",
+        "confidence",
+      ]);
       const parsedConfidenceText = toTrimmedString(parsed.gemini_confidence);
       const confidenceValue =
         reportedConfidence ??
@@ -123,6 +153,49 @@ function App() {
       } else {
         setResponseText(JSON.stringify(data, null, 2));
       }
+
+      const filterBySimilarity = (incomingResults) => {
+        const items = Array.isArray(incomingResults) ? incomingResults : [];
+        return items.filter((item) => {
+          const similarityValue =
+            typeof item?.similarity === "number"
+              ? item.similarity
+              : toNumberOrNull(item?.similarity);
+          return (
+            similarityValue !== null &&
+            Number.isFinite(similarityValue) &&
+            similarityValue >= COSINE_SIMILARITY_THRESHOLD
+          );
+        });
+      };
+
+      const serverSimilarResults = filterBySimilarity(data.matches);
+
+      if (serverSimilarResults.length > 0) {
+        setRelatedResults(serverSimilarResults);
+      } else {
+        try {
+          const searchResponse = await fetch(searchEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: ticket, top_k: 5 }),
+          });
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
+            setRelatedResults(filterBySimilarity(searchData.results));
+          } else {
+            setRelatedResults([]);
+            console.warn(
+              "Vector search failed",
+              searchResponse.status,
+              await searchResponse.text()
+            );
+          }
+        } catch (searchError) {
+          setRelatedResults([]);
+          console.warn("Vector search error", searchError);
+        }
+      }
     } catch (error) {
       const message =
         error instanceof Error
@@ -132,6 +205,7 @@ function App() {
       setResponseText("");
       setStructuredResult(null);
     } finally {
+      await fetchHistory();
       setLoading(false);
     }
   };
@@ -144,6 +218,21 @@ function App() {
       return `${(value * 100).toFixed(1)}%`;
     }
     return value.toFixed(2);
+  };
+
+  const toDisplayText = (value) => {
+    if (value === undefined || value === null) {
+      return "";
+    }
+    return String(value).trim();
+  };
+
+  const formatSimilarity = (value) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return "-";
+    }
+    const bounded = Math.min(Math.max(value, 0), 1);
+    return `${(bounded * 100).toFixed(1)}%`;
   };
 
   return (
@@ -234,7 +323,9 @@ function App() {
         >
           <h2 style={{ marginTop: 0, color: "#000" }}>Gemini API 応答</h2>
           <div style={{ marginBottom: "16px" }}>
-            <h3 style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}>
+            <h3
+              style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}
+            >
               タイトル
             </h3>
             <p
@@ -249,7 +340,9 @@ function App() {
             </p>
           </div>
           <div style={{ marginBottom: "16px" }}>
-            <h3 style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}>
+            <h3
+              style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}
+            >
               信頼度
             </h3>
             <p
@@ -267,7 +360,9 @@ function App() {
             </p>
           </div>
           <div style={{ marginBottom: "16px" }}>
-            <h3 style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}>
+            <h3
+              style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}
+            >
               分類説明
             </h3>
             <p
@@ -282,7 +377,9 @@ function App() {
             </p>
           </div>
           <div>
-            <h3 style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}>
+            <h3
+              style={{ margin: "0 0 8px", fontSize: "1.1rem", color: "#333" }}
+            >
               対応提案内容
             </h3>
             <p
@@ -342,6 +439,115 @@ function App() {
             </pre>
           </div>
         )
+      )}
+
+      {hasSubmitted && (
+        <div
+          style={{
+            marginTop: "40px",
+            padding: "20px",
+            backgroundColor: "#fff",
+            borderRadius: "4px",
+            border: "1px solid #dee2e6",
+          }}
+        >
+          <h2 style={{ marginTop: 0, color: "#000" }}>関連する保存済み回答</h2>
+          <p style={{ marginTop: "4px", color: "#555" }}>
+            コサイン類似度 {COSINE_SIMILARITY_THRESHOLD}{" "}
+            以上の履歴のみを表示します。
+          </p>
+          {loading ? (
+            <p style={{ marginTop: "12px", color: "#555" }}>検索中...</p>
+          ) : relatedResults.length === 0 ? (
+            <p style={{ marginTop: "12px", color: "#555" }}>
+              条件を満たすデータがありません。
+            </p>
+          ) : (
+            <div
+              style={{
+                marginTop: "20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "16px",
+              }}
+            >
+              {relatedResults.map((item, index) => {
+                const parsed =
+                  item &&
+                  typeof item.parsed === "object" &&
+                  item.parsed !== null
+                    ? item.parsed
+                    : {};
+                const title =
+                  toDisplayText(parsed.ticket_classification_title) ||
+                  toDisplayText(parsed.ticket_classification_content) ||
+                  toDisplayText(item.ticket) ||
+                  `保存済み回答 ${index + 1}`;
+                const summary =
+                  toDisplayText(parsed.gemini_answer) ||
+                  toDisplayText(parsed.ticket_classification_content) ||
+                  toDisplayText(item.raw_response);
+                const ticketPreview = toDisplayText(item.ticket);
+                return (
+                  <div
+                    key={item.id ?? index}
+                    style={{
+                      paddingBottom: "12px",
+                      borderBottom: "1px solid #f1f3f5",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "baseline",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <h3 style={{ margin: 0, color: "#333" }}>{title}</h3>
+                      <span style={{ fontSize: "0.9rem", color: "#666" }}>
+                        類似度: {formatSimilarity(item.similarity)}
+                      </span>
+                    </div>
+                    <p
+                      style={{
+                        margin: "4px 0",
+                        color: "#666",
+                        fontSize: "0.9rem",
+                      }}
+                    >
+                      保存日時: {toDisplayText(item.created_at) || "不明"}
+                    </p>
+                    {summary && (
+                      <p
+                        style={{
+                          margin: "8px 0",
+                          whiteSpace: "pre-wrap",
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        提案内容: {summary}
+                      </p>
+                    )}
+                    {ticketPreview && (
+                      <p
+                        style={{
+                          margin: "8px 0",
+                          color: "#555",
+                          whiteSpace: "pre-wrap",
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        元チケット: {ticketPreview}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

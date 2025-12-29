@@ -1,6 +1,8 @@
 import React, { useCallback, useState } from "react";
 import "./App.css";
 
+console.log("API接続先:", process.env.REACT_APP_API_BASE_URL);
+
 function App() {
   const apiBaseUrl = (
     process.env.REACT_APP_GEMINI_CLIENT_BASE_URL ||

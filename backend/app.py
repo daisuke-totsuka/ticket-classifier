@@ -15,6 +15,8 @@ EMBEDDING_MODEL = os.environ.get("GEMINI_EMBEDDING_MODEL", "models/text-embeddin
 MIN_SIMILARITY = 0.93
 
 app = Flask(__name__)
+CORS(app, origins=["https://ticket-classifier-frontend.onrender.com"])
+
 CORS(app)
 
 API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
